@@ -2229,4 +2229,5 @@ with tab_chat:
                     with st.spinner("답변 생성 중..."):
                         ans = chat_answer(st.session_state.report, st.session_state.chat, msg)
                     st.write(ans)
+
                 st.session_state.chat.append({"role": "assistant", "content": ans})
