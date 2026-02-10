@@ -832,7 +832,14 @@ def analyze_risk(contract_text: str, registry_text: str, manual: Dict[str, Any])
     signals: List[Dict[str, Any]] = []
     score = 0
     is_upload_mode = (manual.get("report_source") == "upload")
-
+    if not (rt or "").strip():
+        signals.append({
+            "title": "정확도 제한: 등기부 미업로드",
+            "severity": "low",
+            "detail": "등기부등본이 없으면 근저당/압류/신탁 같은 권리관계 확인이 제한됩니다.",
+            "weight": 0,
+            "tag": "info"
+        })
     owner = manual.get("owner_name", "")
     landlord = manual.get("landlord_name", "")
     deposit = int(manual.get("deposit", 0) or 0)
@@ -1038,31 +1045,34 @@ def analyze_risk(contract_text: str, registry_text: str, manual: Dict[str, Any])
             score += 18
     else:
         if (not is_upload_mode) and deposit > 0:
-            score += 8
             signals.append({
-                "title": "시세 정보 없음",
-                "severity": "mid",
+                "title": "정확도 제한: 시세 정보 없음",
+                "severity": "low",   # ✅ 위험등급 올리지 않음
                 "detail": "보증금 대비 안전여유 판단을 위해 시세(실거래/매매가) 확인을 권장합니다.",
-                "weight": 8
+                "weight": 0,
+                "tag": "info"        # ✅ 등급 산정에서 제외할 태그
             })
 
     ids = find_id_like((contract_text or "") + "\n" + (registry_text or ""))[:10]
     score = max(0, min(100, score))
-    has_high = any(s.get("severity") == "high" for s in signals)
-    has_mid = any(s.get("severity") == "mid" for s in signals)
+
+    def _is_info_signal(s: Dict[str, Any]) -> bool:
+        return (s.get("tag") == "info") or (str(s.get("title", "")).startswith("정확도 제한:"))
+
+    has_high = any((s.get("severity") == "high") and (not _is_info_signal(s)) for s in signals)
+    has_mid  = any((s.get("severity") == "mid")  and (not _is_info_signal(s)) for s in signals)
 
     if has_high:
         status_label = "위험"
         chip = "high"
     elif has_mid:
-        status_label = "주의"
+        status_label = "확인 필요"
         chip = "mid"
     else:
-        status_label = "안전"
+        status_label = "특이사항 없음"
         chip = "low"
 
     level = status_label
-
     return {
         "score": score,
         "level": level,
@@ -1540,13 +1550,6 @@ def render_report_like_app(report: Dict[str, Any]):
 
                     # 특약 핵심 문장 발췌 TOP3 (분석결과와 중복 방지)
                     key_lines = extract_clause_key_lines(contract_text, max_lines=20)
-
-                    st.markdown("""
-                    <div class="sectionTitle">특약에서 발췌한 핵심 문장</div>
-                    <div class="muted" style="margin-top:6px;">
-                    아래 문장은 OCR로 발췌된 '원문 일부'예요. 계약서 PDF 원문에서 동일 문장을 찾아 확인해 보세요.
-                    </div>
-                    """, unsafe_allow_html=True)
 
                     st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
@@ -2166,7 +2169,7 @@ with tab_ai:
 
                 messages = [
                     {"role": "system", "content": """
-                    너는 전월세 계약에서 사용자가 ‘지금 당장 할 일’을 만드는 도우미야.
+                    너는 전월세 계약에서 사용자가 ‘지금 당장 할 일’을 만드는 도우미다.
                     - 확정 판단 금지(가능성/확인 필요)
                     - 법률 자문 아님
                     - 아래 payload(리포트+원문 일부)만 근거로 작성
@@ -2229,5 +2232,4 @@ with tab_chat:
                     with st.spinner("답변 생성 중..."):
                         ans = chat_answer(st.session_state.report, st.session_state.chat, msg)
                     st.write(ans)
-
                 st.session_state.chat.append({"role": "assistant", "content": ans})
